@@ -35,9 +35,21 @@ Folding_Knife, Straight_Knife, Scissor, Utility_Knife, Multi-tool_Knife
 
 ## On Colab
 
-Put the unzipped `OPIXray/` folder in your Google Drive (e.g. `MyDrive/xray/OPIXray`)
-and point `dataset.root` there so it survives session restarts. See
-`notebooks/colab_train.ipynb`.
+Put the unzipped `OPIXray/` folder at `<your project clone>/data/OPIXray` on Google Drive
+(matches the config's default `dataset.root: data/OPIXray`, so no override is needed) —
+this survives session restarts. See `notebooks/colab_train.ipynb`.
+
+If your authorized copy is a direct Google Drive file (e.g. a share link/ID from the
+authors), `gdown` handles Drive's large-file confirmation flow better than `wget`/`curl`:
+
+```bash
+pip install gdown
+gdown --id <YOUR_OWN_FILE_ID> -O opixray.zip
+unzip -q opixray.zip -d extracted   # inspect the layout before moving into data/OPIXray
+```
+
+Don't commit a specific file ID/link into this repo — it's your own authorized access,
+not something to bake into version-controlled, potentially-public files.
 
 > Scope note: use only for authorized screening-decision-support research. Do not use
 > for, or frame as, guidance on concealment or defeating screening.
