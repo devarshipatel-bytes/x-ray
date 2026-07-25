@@ -8,6 +8,7 @@ BEFORE any training.
 from __future__ import annotations
 
 import argparse
+import os
 
 import matplotlib
 matplotlib.use("Agg")
@@ -35,6 +36,7 @@ def main():
     use_mat = cfg["input"]["use_material_proxy"]
     ds = build_dataset(cfg, split="train", train=True)
     print(f"[sanity] {len(ds)} images, {in_channels(cfg)}-channel input")
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
     n = min(args.n, len(ds))
     cols = 2 if use_mat else 1
