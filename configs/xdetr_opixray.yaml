@@ -1,0 +1,73 @@
+# X-DETR config — OPIXray (start here). T4-friendly (Colab Free) / 4 GB-inference-friendly.
+# Override any field from the CLI, e.g.  --set training.epochs=50 model.dec_layers=3
+
+dataset:
+  name: opixray                      # -> data/opixray.py
+  root: data/OPIXray                 # expects {root}/train, {root}/test  (see scripts/download_opixray.md)
+  # OPIXray classes (5 cutters). Order defines the class ids used everywhere.
+  classes: [Folding_Knife, Straight_Knife, Scissor, Utility_Knife, Multi-tool_Knife]
+  num_classes: 5
+  # occlusion-level sub-splits present in the OPIXray test set (used by evaluate.py)
+  occlusion_levels: [OL1, OL2, OL3]
+
+input:
+  size: 512                          # letterbox to size x size
+  use_material_proxy: true           # concat 2 LUT-derived material channels -> 5-channel input
+  # RGB normalization (ImageNet). Material channels are already in [0,1].
+  pixel_mean: [0.485, 0.456, 0.406]
+  pixel_std:  [0.229, 0.224, 0.225]
+
+model:
+  name: xdetr
+  backbone: resnet50                 # resnet18/34/50; frozen stem+stage1, frozen BN
+  pretrained_backbone: true
+  hidden_dim: 256
+  nheads: 8
+  ffn_dim: 1024
+  enc_layers: 1                      # AIFI self-attention on P5 (RT-DETR style)
+  dec_layers: 6                      # drop to 3 for speed on Colab Free
+  num_queries: 300                   # drop to 100 for speed
+  num_feature_levels: 3              # P3,P4,P5
+  dropout: 0.0
+  aux_loss: true                     # supervise every decoder layer
+  # material-proxy input branch is controlled by input.use_material_proxy above
+
+matcher:                             # Hungarian assignment costs
+  cost_class: 2.0
+  cost_bbox: 5.0
+  cost_giou: 2.0
+  focal_alpha: 0.25
+
+loss:
+  cls_loss_coef: 2.0
+  bbox_loss_coef: 5.0
+  giou_loss_coef: 2.0
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+
+training:
+  epochs: 50
+  batch_size: 4
+  grad_accum: 2                      # effective batch = 8
+  amp: true                          # fp16 mixed precision (required on T4)
+  lr: 1.0e-4
+  lr_backbone: 1.0e-5
+  weight_decay: 1.0e-4
+  clip_grad_norm: 0.1
+  lr_drop_epoch: 40                  # step LR x0.1 at 80%
+  num_workers: 2
+  seed: 42
+  # Colab-Free resume: checkpoints written here every epoch; set to a Drive path in the notebook.
+  output_dir: runs/opixray_xdetr
+  resume: ""                         # path to checkpoint to resume from ("" = fresh)
+
+augment:
+  hflip: 0.5
+  brightness: 0.15                   # mild — color encodes material, keep hue stable
+  contrast: 0.15
+  hue: 0.0                           # DO NOT hue-jitter pseudo-color X-ray
+
+eval:
+  iou_thresh: 0.5                    # VOC-style AP@0.5 (primary KPI)
+  score_thresh: 0.05                 # low threshold for AP curve; UI uses higher
+  max_dets: 100

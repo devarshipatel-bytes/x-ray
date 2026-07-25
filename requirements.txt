@@ -1,0 +1,19 @@
+# Core
+torch>=2.0
+torchvision>=0.15
+numpy>=1.24
+scipy>=1.10          # Hungarian matching (linear_sum_assignment)
+Pillow>=9.5
+pyyaml>=6.0
+tqdm>=4.65
+
+# Visualization / demo
+matplotlib>=3.7
+gradio>=4.0          # local operator demo (runs on 4 GB card)
+
+# Optional (evaluation / failure analysis / export). Safe to skip locally.
+# pycocotools>=2.0   # not required: we ship a self-contained VOC-style AP evaluator
+# fiftyone>=0.23     # interactive FP/FN failure gallery (viz/fiftyone_app.py)
+# onnx>=1.15         # export for local inference (scripts/export_onnx.py)
+# onnxruntime>=1.16
+# opencv-python>=4.8 # only if you prefer cv2 over PIL for I/O
