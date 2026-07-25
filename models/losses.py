@@ -86,10 +86,19 @@ class SetCriterion(nn.Module):
             for k, v in self._compute(aux, targets, aux_indices, num_boxes_t).items():
                 losses[f"{k}_aux{i}"] = v
 
+        # encoder-level (query-selection) loss: without this, enc_class/enc_bbox never
+        # receive gradient (their outputs are only used through a detached topk/gather to
+        # pick queries), so which memory tokens become queries never improves during
+        # training. Matched independently against the same targets.
+        if "enc_outputs" in outputs:
+            enc_indices = self.matcher(outputs["enc_outputs"], targets)
+            for k, v in self._compute(outputs["enc_outputs"], targets, enc_indices, num_boxes_t).items():
+                losses[f"{k}_enc"] = v
+
         # weighted total
         total = torch.zeros((), device=device)
         for k, v in losses.items():
-            base = k.split("_aux")[0]
+            base = k.split("_aux")[0].split("_enc")[0]
             total = total + self.weights[base] * v
         losses["loss"] = total
         return losses

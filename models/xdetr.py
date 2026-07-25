@@ -109,6 +109,10 @@ class XDETR(nn.Module):
         if self.aux_loss:
             out["aux_outputs"] = [{"pred_logits": out_class[i], "pred_boxes": out_coord[i]}
                                   for i in range(hs.shape[0] - 1)]
+        # supervise the query-selection heads directly (RT-DETR-style encoder-level loss).
+        # ref/tgt above are detached before selection, so without this loss enc_class/enc_bbox
+        # never receive gradient and query selection stays at random init forever.
+        out["enc_outputs"] = {"pred_logits": enc_logits, "pred_boxes": enc_boxes}
         return out
 
 
