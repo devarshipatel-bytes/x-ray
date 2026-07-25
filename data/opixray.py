@@ -157,16 +157,22 @@ class OPIXrayDataset(Dataset):
         return np.array(boxes, dtype=np.float32).reshape(-1, 4), np.array(labels, dtype=np.int64)
 
     def _occlusion_stems(self, level: str):
-        for cand in (
+        candidates = [
             os.path.join(self.root, "test", "test_occlusion", f"{level}.txt"),
             os.path.join(self.root, "test", f"{level}.txt"),
             os.path.join(self.root, f"{level}.txt"),
-        ):
+        ]
+        # alternate release layout: OL1/OL2/OL3 -> test/test_knife-1.txt / -2 / -3
+        # (bare image stems, one per line, no extension)
+        level_num = level[2:] if level.upper().startswith("OL") else None
+        if level_num:
+            candidates.append(os.path.join(self.root, "test", f"test_knife-{level_num}.txt"))
+        for cand in candidates:
             if os.path.isfile(cand):
                 with open(cand) as f:
                     return {self._stem(l.strip()) for l in f if l.strip()}
         raise FileNotFoundError(
-            f"Occlusion list for {level} not found. Expected test/test_occlusion/{level}.txt"
+            f"Occlusion list for {level} not found. Tried: {candidates}"
         )
 
     # ---- Dataset API ---------------------------------------------------------
