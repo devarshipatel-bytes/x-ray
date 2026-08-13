@@ -1,7 +1,7 @@
 """Transformer decoder with reference points + iterative box refinement.
 
-Standard multi-head attention (no custom deformable CUDA op) so it runs anywhere,
-including Colab Free. Cross-attention weights of the last layer are cached on
+Standard multi-head attention (no custom deformable CUDA op) so it runs anywhere without
+a compile step. Cross-attention weights of the last layer are cached on
 `self.last_cross_attn` (+ level shapes) so the viz suite can render per-object heatmaps.
 """
 from __future__ import annotations

@@ -1,20 +1,20 @@
 # X-DETR — Occlusion-Robust Prohibited-Item Detection in X-ray Security Imagery
 
 A **custom, RF-DETR/RT-DETR-inspired object detector** for prohibited-item detection in
-dual-energy X-ray screening images, built to be **trainable on Colab Free (T4 16 GB)** and to
-**run inference + rich visualizations locally on a 4 GB GPU**. Screening *decision support* —
-it highlights and **ranks** regions for a human operator; the operator decision stays the authority.
+dual-energy X-ray screening images. Trains on a **single consumer GPU (12 GB)** and runs
+inference + rich visualizations on far less. Screening *decision support* — it highlights
+and **ranks** regions for a human operator; the operator decision stays the authority.
 
 > Scope: authorized screening-decision-support research only. Not guidance on concealment
 > or defeating screening.
 
 ## Why this design (the honest constraints)
 
-- **4 GB VRAM can't train a DETR** → train on Colab (T4), infer/visualize locally (fp16 fits ~2–3 GB).
+- **One consumer GPU, no cluster** → AMP fp16, gradient accumulation for a larger effective
+  batch, no custom CUDA ops, and per-epoch checkpointing so any crash is resumable.
 - **No dual-energy physics in public data** → public sets ship *pseudo-color RGB*; true
   effective-Z needs raw scanner data. We approximate with **material-proxy channels** derived
   from the color LUT (`data/material_proxy.py`) — a proxy, clearly labeled as such.
-- **Colab Free disconnects** → training checkpoints to Drive **every epoch** and auto-resumes.
 
 ## Model: X-DETR (~30–36 M params)
 
@@ -24,7 +24,7 @@ class (focal) + box (L1+GIoU) heads`, matched with a Hungarian matcher. Pure PyT
 custom CUDA op** — so it runs anywhere. See `models/xdetr.py`.
 
 The X-ray-specific contribution is the **5-channel material-proxy input** (RGB + organic/metal
-proxies); ablate by setting `input.use_material_proxy: false`.
+proxies); ablate by setting `input.use_material_proxy: false` (or `--no-material-proxy`).
 
 ## Layout
 
@@ -35,41 +35,88 @@ models/    xdetr.py backbone.py encoder.py decoder.py heads.py matcher.py losses
 engine/    train.py  evaluate.py  checkpoint.py  config.py
 viz/       gallery.py detect_overlay.py attention.py gradcam.py operator_map.py
            calibration.py heatmap.py common.py fiftyone_app.py
-app/       gradio_demo.py            # local 4 GB operator UI
-scripts/   overfit.py sanity_data.py gallery_batch.py export_onnx.py download_opixray.md
-notebooks/ colab_train.ipynb  colab_infer_viz.ipynb
+app/       gradio_demo.py            # local operator UI
+scripts/   check_dataset.py sanity_data.py overfit.py gallery_batch.py export_onnx.py
+           download_opixray.md
+notebooks/ infer_viz.ipynb
 ```
 
 ## Quickstart
 
 ```bash
-pip install -r requirements.txt          # torch/torchvision preinstalled on Colab
+pip install -r requirements.txt
 
-# 0) wiring gate — NO dataset needed, must print PASS
-python -m scripts.overfit --config configs/xdetr_opixray.yaml --synthetic --iters 60
+# 1) get OPIXray (see scripts/download_opixray.md) into data/OPIXray, then verify the layout
+python -m scripts.check_dataset --config configs/xdetr_opixray.yaml
 
-# 1) get OPIXray (see scripts/download_opixray.md), then sanity-check the data
+# 2) eyeball the loader: boxes, letterboxing, material-proxy channels
 python -m scripts.sanity_data --config configs/xdetr_opixray.yaml --n 6 --out assets/sanity.png
 
-# 2) overfit 10 real images (boxes should snap) — correctness on real data
+# 3) wiring gate — overfit 10 real images (boxes should snap), must print PASS
 python -m scripts.overfit --config configs/xdetr_opixray.yaml --n 10 --iters 300
 
-# 3) train (Colab T4). Locally you can smoke-test with tiny settings:
-python -m engine.train --config configs/xdetr_opixray.yaml \
-    --set training.epochs=50 training.output_dir=runs/opixray_xdetr
+# 4) train
+python -m engine.train --config configs/xdetr_opixray.yaml --epochs 50 --batch-size 8
 
-# 4) evaluate: per-class AP@0.5, occlusion OL1/2/3, ECE
-python -m engine.evaluate --config configs/xdetr_opixray.yaml --weights runs/opixray_xdetr/last.pth
+# 5) evaluate: per-class AP@0.5, occlusion OL1/2/3, ECE
+python -m engine.evaluate --config configs/xdetr_opixray.yaml --weights runs/opixray_xdetr/final.pth
 
-# 5) visualization galleries (6-panel: detections + heatmaps + operator map)
+# 6) visualization galleries (6-panel: detections + heatmaps + operator map)
 python -m scripts.gallery_batch --config configs/xdetr_opixray.yaml \
-    --weights runs/opixray_xdetr/last.pth --n 12 --out assets/galleries
+    --weights runs/opixray_xdetr/final.pth --n 12 --out assets/galleries
 
-# 6) local operator demo (4 GB GPU)
-python app/gradio_demo.py --config configs/xdetr_opixray.yaml --weights runs/opixray_xdetr/last.pth
+# 7) local operator demo
+python app/gradio_demo.py --config configs/xdetr_opixray.yaml --weights runs/opixray_xdetr/final.pth
 ```
 
-Train on Colab with the notebooks in `notebooks/` (Drive checkpointing + resume built in).
+## Training
+
+Every hyperparameter has a flag — `python -m engine.train --help` lists them all. Flags
+override the YAML; `--set dotted.key=value` reaches anything without a flag.
+
+```bash
+# defaults from the config (50 epochs, batch 8, 512px, fp16)
+python -m engine.train --config configs/xdetr_opixray.yaml
+
+# explicit hyperparameters
+python -m engine.train --config configs/xdetr_opixray.yaml \
+    --epochs 80 --batch-size 8 --img-size 512 --lr 1e-4 --ckpt-interval 10
+
+# 1-minute smoke test before a long run
+python -m engine.train --config configs/xdetr_opixray.yaml \
+    --epochs 1 --limit 20 --batch-size 2 --img-size 320 --log-interval 1
+
+# resume (automatic if runs/<dir>/last.pth exists)
+python -m engine.train --config configs/xdetr_opixray.yaml
+```
+
+Checkpoints land in `--output-dir` (default `runs/opixray_xdetr`):
+
+| file | when |
+|---|---|
+| `last.pth` | overwritten every epoch — the auto-resume point |
+| `epoch_XXX.pth` | every `--ckpt-interval` epochs (default 10), never overwritten |
+| `final.pth` | on completion |
+| `train_log.jsonl`, `config_used.yaml` | per-epoch metrics and the exact resolved config |
+
+### Fitting your VRAM
+
+VRAM scales with `batch_size × img_size²`, then with `dec_layers` and `num_queries`.
+If you hit `CUDA out of memory`, apply in this order — the first two cost you nothing in
+final accuracy:
+
+```bash
+--batch-size 4 --grad-accum 2      # same effective batch of 8, half the activations
+--img-size 384                     # cheapest real win; costs some small-object recall
+--dec-layers 3 --num-queries 100   # ~40% faster, measurably lower AP
+--backbone resnet18                # last resort
+```
+
+Rough guide at 512px with `--amp`: **12 GB** → `--batch-size 8`; **8 GB** → `--batch-size 4
+--grad-accum 2`; **6 GB** → add `--img-size 384`; **4 GB** → inference only.
+
+Keep `--amp` on unless you are debugging numerics. `--workers` should be near your physical
+core count — JPEG decode of the 1225×954 originals, not the GPU, is usually the bottleneck.
 
 ## Visualizations
 
@@ -80,12 +127,9 @@ Train on Colab with the notebooks in `notebooks/` (Drive checkpointing + resume 
 - **Calibration** — reliability diagram + ECE, per-class AP bars, occlusion trend (`viz/calibration.py`).
 - **FiftyOne** — interactive FP/FN failure gallery (`viz/fiftyone_app.py`, optional).
 
+`notebooks/infer_viz.ipynb` walks through all of it against a trained checkpoint.
+
 ## Switching datasets
 
 `dataset.name: pidray` (or `hixray`) uses the shared COCO-json loader (`data/coco_style.py`) —
 set `root`, ann files, and `classes`. OPIXray occlusion-stratified eval is OPIXray-specific.
-
-## Tuning for Colab-Free speed
-
-Drop `model.dec_layers` 6→3 and `model.num_queries` 300→100, keep `input.size: 512`,
-`training.amp: true`, `training.batch_size: 4`, `training.grad_accum: 2`. ~7–15 min/epoch on T4.

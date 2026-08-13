@@ -2,7 +2,7 @@
 
 AIFI  - Attention-based Intra-scale Feature Interaction: run transformer self-attention
         ONLY on the smallest map (P5), where the token count is small and global context
-        matters most. Cheap enough for a T4.
+        matters most — attention over P3 would be ~16x the tokens for little gain.
 CCFM  - CNN-based Cross-scale Feature Fusion: a light PAN (top-down + bottom-up) that mixes
         P3/P4/P5 with convolutions.
 

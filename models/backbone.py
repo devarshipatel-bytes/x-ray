@@ -24,9 +24,15 @@ class FrozenBatchNorm2d(nn.Module):
         self.register_buffer("bias", torch.zeros(n))
         self.register_buffer("running_mean", torch.zeros(n))
         self.register_buffer("running_var", torch.ones(n))
-        # present in standard BatchNorm2d state_dicts (incl. torchvision pretrained
-        # weights); unused in the frozen forward pass but needed so load_state_dict matches.
-        self.register_buffer("num_batches_tracked", torch.tensor(0, dtype=torch.long))
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        # `num_batches_tracked` is unused in the frozen forward pass. Rather than
+        # registering it (which the pre-num_batches_tracked resnet18/34 checkpoints
+        # lack, breaking a strict load), drop it when a checkpoint happens to carry it.
+        state_dict.pop(prefix + "num_batches_tracked", None)
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict,
+                                      missing_keys, unexpected_keys, error_msgs)
 
     def forward(self, x):
         w = self.weight.reshape(1, -1, 1, 1)

@@ -21,11 +21,14 @@ class HungarianMatcher(nn.Module):
     @torch.no_grad()
     def forward(self, outputs: Dict, targets: List[Dict]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         B, Q = outputs["pred_logits"].shape[:2]
-        out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()   # [B*Q, C]
-        out_bbox = outputs["pred_boxes"].flatten(0, 1)              # [B*Q, 4]
+        # fp32 throughout: under AMP the logits arrive as fp16, where sigmoid() of a
+        # confidently-negative logit underflows to 0 and the 1e-8 floor below is itself
+        # subnormal -> log(0) = -inf poisons the cost matrix and breaks the assignment.
+        out_prob = outputs["pred_logits"].float().flatten(0, 1).sigmoid()   # [B*Q, C]
+        out_bbox = outputs["pred_boxes"].float().flatten(0, 1)              # [B*Q, 4]
 
         tgt_ids = torch.cat([t["labels"] for t in targets])
-        tgt_bbox = torch.cat([t["boxes"] for t in targets])
+        tgt_bbox = torch.cat([t["boxes"] for t in targets]).float()
 
         if tgt_ids.numel() == 0:
             return [(torch.as_tensor([], dtype=torch.int64),

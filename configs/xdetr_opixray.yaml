@@ -1,9 +1,13 @@
-# X-DETR config — OPIXray (start here). T4-friendly (Colab Free) / 4 GB-inference-friendly.
-# Override any field from the CLI, e.g.  --set training.epochs=50 model.dec_layers=3
+# X-DETR config — OPIXray. Defaults tuned for a single 12 GB GPU (e.g. RTX 3060 12G / 4070).
+#
+# Override anything from the CLI, either with a named flag or with --set:
+#   python -m engine.train --config configs/xdetr_opixray.yaml --epochs 80 --batch-size 8
+#   python -m engine.train --config configs/xdetr_opixray.yaml --set augment.hflip=0.0
+# Run `python -m engine.train --help` for the full flag list.
 
 dataset:
   name: opixray                      # -> data/opixray.py
-  root: data/OPIXray                 # expects {root}/train, {root}/test  (see scripts/download_opixray.md)
+  root: data/OPIXray                 # expects {root}/train and {root}/test (see scripts/download_opixray.md)
   # OPIXray classes (5 cutters). Order defines the class ids used everywhere.
   classes: [Folding_Knife, Straight_Knife, Scissor, Utility_Knife, Multi-tool_Knife]
   num_classes: 5
@@ -25,8 +29,8 @@ model:
   nheads: 8
   ffn_dim: 1024
   enc_layers: 1                      # AIFI self-attention on P5 (RT-DETR style)
-  dec_layers: 6                      # drop to 3 for speed on Colab Free
-  num_queries: 300                   # drop to 100 for speed
+  dec_layers: 6
+  num_queries: 300
   num_feature_levels: 3              # P3,P4,P5
   dropout: 0.0
   aux_loss: true                     # supervise every decoder layer
@@ -47,19 +51,19 @@ loss:
 
 training:
   epochs: 50
-  batch_size: 4
-  grad_accum: 2                      # effective batch = 8
-  amp: true                          # fp16 mixed precision (required on T4)
+  batch_size: 8                      # fits 12 GB at 512px with amp; drop to 4 if you OOM
+  grad_accum: 1                      # effective batch = batch_size x grad_accum
+  amp: true                          # fp16 mixed precision — roughly halves activation memory
   lr: 1.0e-4
-  lr_backbone: 1.0e-5
+  lr_backbone: 1.0e-5                # pretrained backbone learns 10x slower
   weight_decay: 1.0e-4
   clip_grad_norm: 0.1
-  lr_drop_epoch: 40                  # step LR x0.1 at 80%
-  num_workers: 2
+  lr_drop_epoch: 40                  # step LR x0.1 at 80% of training
+  num_workers: 8                     # JPEG decode is the CPU bottleneck; ~= physical cores
   seed: 42
-  # Colab-Free resume: checkpoints written here every epoch; set to a Drive path in the notebook.
   output_dir: runs/opixray_xdetr
-  resume: ""                         # path to checkpoint to resume from ("" = fresh)
+  ckpt_interval: 10                  # archival epoch_XXX.pth every N epochs (0 = last.pth only)
+  resume: ""                         # explicit checkpoint path ("" = auto-resume from last.pth)
 
 augment:
   hflip: 0.5

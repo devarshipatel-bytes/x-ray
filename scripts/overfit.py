@@ -1,16 +1,13 @@
 """M1 correctness gate: overfit a tiny subset to near-zero loss.
 
-Two modes:
-  --synthetic     no dataset needed; random images + boxes. Validates model/matcher/loss
-                  wiring end-to-end (forward+backward+loss finite+decreasing). Runs on CPU.
-  (default)       overfit the first --n real OPIXray images; boxes should visually snap.
+Overfits the first --n real OPIXray images; boxes should visually snap and the loss
+should collapse. Validates model/matcher/loss wiring end-to-end on real data.
 
-  python -m scripts.overfit --config configs/xdetr_opixray.yaml --synthetic --iters 60
   python -m scripts.overfit --config configs/xdetr_opixray.yaml --n 10 --iters 300
 
   # 4 GB GPU: shrink the model AND use --amp (fp16) — ResNet-50 backbone activations at
   # 512px in fp32 fill a 4 GB card even at batch 2/dec_layers=3.
-  python -m scripts.overfit --config configs/xdetr_opixray.yaml --synthetic --iters 60 --amp \
+  python -m scripts.overfit --config configs/xdetr_opixray.yaml --n 10 --iters 300 --amp \
       --set model.dec_layers=3 model.num_queries=100 training.batch_size=2 input.size=384
 """
 from __future__ import annotations
@@ -22,25 +19,6 @@ import torch
 from data import build_dataset, collate_fn, in_channels
 from engine.config import get_device, load_config, set_seed
 from models import build_model, build_matcher, build_criterion
-
-
-def synthetic_batch(cfg, n, ch, device):
-    size = cfg["input"]["size"]
-    num_classes = cfg["dataset"]["num_classes"]
-    imgs, targets = [], []
-    g = torch.Generator().manual_seed(0)
-    for i in range(n):
-        imgs.append(torch.randn(ch, size, size, generator=g))
-        k = int(torch.randint(1, 4, (1,), generator=g))
-        cx = torch.rand(k, generator=g) * 0.6 + 0.2
-        cy = torch.rand(k, generator=g) * 0.6 + 0.2
-        wh = torch.rand(k, 2, generator=g) * 0.2 + 0.1
-        boxes = torch.stack([cx, cy, wh[:, 0], wh[:, 1]], dim=1)
-        labels = torch.randint(0, num_classes, (k,), generator=g)
-        targets.append({"boxes": boxes, "labels": labels})
-    imgs = torch.stack(imgs).to(device)
-    targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-    return imgs, targets
 
 
 def real_batch(cfg, n, device):
@@ -56,7 +34,6 @@ def real_batch(cfg, n, device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -72,12 +49,9 @@ def main():
     model = build_model(cfg, ch).to(device)
     criterion = build_criterion(cfg, build_matcher(cfg)).to(device)
     n_params = sum(p.numel() for p in model.parameters()) / 1e6
-    print(f"[overfit] X-DETR params: {n_params:.1f}M  device={device}  mode={'synthetic' if args.synthetic else 'real'}")
+    print(f"[overfit] X-DETR params: {n_params:.1f}M  device={device}")
 
-    if args.synthetic:
-        imgs, targets = synthetic_batch(cfg, args.n, ch, device)
-    else:
-        imgs, targets = real_batch(cfg, args.n, device)
+    imgs, targets = real_batch(cfg, args.n, device)
     print(f"[overfit] batch: {imgs.shape[0]} images, {sum(len(t['labels']) for t in targets)} boxes")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)

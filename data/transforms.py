@@ -23,11 +23,17 @@ from PIL import Image, ImageEnhance
 from .material_proxy import rgb_to_material
 
 
-def _letterbox(img: Image.Image, size: int, fill=(0, 0, 0)) -> Tuple[Image.Image, float, Tuple[int, int]]:
+def _letterbox(img: Image.Image, size: int, fill=(0, 0, 0),
+               photometric=None) -> Tuple[Image.Image, float, Tuple[int, int]]:
     w, h = img.size
     ratio = min(size / w, size / h)
     nw, nh = int(round(w * ratio)), int(round(h * ratio))
     img_r = img.resize((nw, nh), Image.BILINEAR)
+    # Jitter the DOWNSCALED image: brightness/contrast are per-pixel, so doing them
+    # after the resize is equivalent but ~6x cheaper (OPIXray is 1225x954 -> 512).
+    # Applied before the paste so the letterbox padding stays exactly `fill`.
+    if photometric is not None:
+        img_r = photometric(img_r)
     canvas = Image.new("RGB", (size, size), fill)
     pad_x, pad_y = (size - nw) // 2, (size - nh) // 2
     canvas.paste(img_r, (pad_x, pad_y))
@@ -65,19 +71,21 @@ def _build_transform(cfg: Dict, train: bool) -> Compose:
                 target["boxes"] = b
         return img, target
 
-    def _photometric(img, target):
+    def _photometric(img):
         if bri > 0:
             f = 1.0 + random.uniform(-bri, bri)
             img = ImageEnhance.Brightness(img).enhance(f)
         if con > 0:
             f = 1.0 + random.uniform(-con, con)
             img = ImageEnhance.Contrast(img).enhance(f)
-        return img, target
+        return img
+
+    jitter = _photometric if (bri > 0 or con > 0) else None
 
     def _resize_and_tensor(img, target):
         w0, h0 = img.size
         target["orig_size"] = torch.tensor([h0, w0])
-        img, ratio, (pad_x, pad_y) = _letterbox(img, size)
+        img, ratio, (pad_x, pad_y) = _letterbox(img, size, photometric=jitter)
         # map boxes: original xyxy -> letterboxed xyxy
         boxes = target["boxes"]
         if len(boxes):
@@ -119,7 +127,7 @@ def _build_transform(cfg: Dict, train: bool) -> Compose:
         target["pad"] = torch.tensor([pad_x, pad_y])
         return chans, target
 
-    fns = [_hflip, _photometric, _resize_and_tensor] if train else [_resize_and_tensor]
+    fns = [_hflip, _resize_and_tensor] if train else [_resize_and_tensor]
     return Compose(fns)
 
 

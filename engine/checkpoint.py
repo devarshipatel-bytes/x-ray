@@ -1,7 +1,12 @@
-"""Checkpointing with Colab-Free resume.
+"""Checkpoint save / load / auto-resume.
 
-Writes `last.pth` every epoch and `best.pth` on metric improvement. On Colab set
-`training.output_dir` to a Google Drive path so a disconnect/restart resumes seamlessly.
+A checkpoint carries model + optimizer + scaler + scheduler + epoch + the config it was
+trained with, so resuming restores the exact optimizer and LR-schedule state rather than
+restarting them. `engine.train` writes:
+
+  last.pth        every epoch (overwritten) — what auto-resume picks up
+  epoch_XXX.pth   every training.ckpt_interval epochs — archival, never overwritten
+  final.pth       on completion
 """
 from __future__ import annotations
 
@@ -38,13 +43,24 @@ def load_checkpoint(path: str, model, optimizer=None, scaler=None, scheduler=Non
     return ckpt
 
 
-def maybe_resume(cfg: Dict, model, optimizer, scaler, scheduler) -> Optional[Dict]:
-    """Resume from explicit cfg.training.resume, else auto-resume from output_dir/last.pth."""
+def maybe_resume(cfg: Dict, model, optimizer, scaler, scheduler,
+                 auto: bool = True) -> Optional[Dict]:
+    """Resume from an explicit cfg.training.resume path, else from output_dir/last.pth.
+
+    An explicit path that does not exist is an error, not a silent fresh start — that
+    would quietly discard a run you meant to continue. Pass auto=False to ignore
+    last.pth and start over.
+    """
     out_dir = cfg["training"]["output_dir"]
     resume = cfg["training"].get("resume", "")
-    auto = os.path.join(out_dir, "last.pth")
-    path = resume or (auto if os.path.isfile(auto) else "")
-    if not path or not os.path.isfile(path):
-        return None
+    if resume:
+        if not os.path.isfile(resume):
+            raise FileNotFoundError(f"--resume path does not exist: {resume}")
+        path = resume
+    else:
+        candidate = os.path.join(out_dir, "last.pth")
+        if not auto or not os.path.isfile(candidate):
+            return None
+        path = candidate
     print(f"[checkpoint] resuming from {path}")
     return load_checkpoint(path, model, optimizer, scaler, scheduler)

@@ -13,7 +13,7 @@ def load_config(path: str, overrides: List[str] | None = None) -> Dict:
         cfg = yaml.safe_load(f)
     for ov in overrides or []:
         key, _, val = ov.partition("=")
-        _set_dotted(cfg, key.strip(), _coerce(val.strip()))
+        set_dotted(cfg, key.strip(), _coerce(val.strip()))
     return cfg
 
 
@@ -28,7 +28,8 @@ def _coerce(v: str):
     return v
 
 
-def _set_dotted(cfg: Dict, dotted: str, val):
+def set_dotted(cfg: Dict, dotted: str, val):
+    """Write cfg["a"]["b"] = val for dotted == "a.b", creating dicts as needed."""
     keys = dotted.split(".")
     d = cfg
     for k in keys[:-1]:
