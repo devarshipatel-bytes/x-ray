@@ -10,11 +10,15 @@ A transform is a callable(pil_img, target_dict) -> (tensor CxHxW, target_dict).
 Boxes in the incoming target are absolute xyxy in the ORIGINAL image pixel space.
 Outgoing target['boxes'] are normalized cxcywh in [0,1] w.r.t. the letterboxed square.
 target also carries orig_size, size, ratio, pad for inverse mapping at eval time.
+
+Everything here is a module-level class, never a closure: on Windows (and anywhere using
+the 'spawn' start method) DataLoader workers pickle the dataset, and a local function
+inside a factory cannot be pickled.
 """
 from __future__ import annotations
 
 import random
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -50,18 +54,31 @@ class Compose:
         return img, target
 
 
-def _build_transform(cfg: Dict, train: bool) -> Compose:
-    size = int(cfg["input"]["size"])
-    use_material = bool(cfg["input"]["use_material_proxy"])
-    mean = torch.tensor(cfg["input"]["pixel_mean"]).view(3, 1, 1)
-    std = torch.tensor(cfg["input"]["pixel_std"]).view(3, 1, 1)
-    aug = cfg.get("augment", {})
-    p_flip = float(aug.get("hflip", 0.0)) if train else 0.0
-    bri = float(aug.get("brightness", 0.0)) if train else 0.0
-    con = float(aug.get("contrast", 0.0)) if train else 0.0
+class PhotometricJitter:
+    """Mild brightness/contrast jitter. Callable(img) -> img; hue is deliberately untouched."""
 
-    def _hflip(img, target):
-        if p_flip > 0 and random.random() < p_flip:
+    def __init__(self, brightness: float, contrast: float):
+        self.brightness = float(brightness)
+        self.contrast = float(contrast)
+
+    def __call__(self, img: Image.Image) -> Image.Image:
+        if self.brightness > 0:
+            f = 1.0 + random.uniform(-self.brightness, self.brightness)
+            img = ImageEnhance.Brightness(img).enhance(f)
+        if self.contrast > 0:
+            f = 1.0 + random.uniform(-self.contrast, self.contrast)
+            img = ImageEnhance.Contrast(img).enhance(f)
+        return img
+
+
+class RandomHorizontalFlip:
+    """Flip image and boxes together. Boxes are absolute xyxy at this stage."""
+
+    def __init__(self, p: float):
+        self.p = float(p)
+
+    def __call__(self, img, target):
+        if self.p > 0 and random.random() < self.p:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
             w = img.size[0]
             b = target["boxes"]
@@ -71,21 +88,24 @@ def _build_transform(cfg: Dict, train: bool) -> Compose:
                 target["boxes"] = b
         return img, target
 
-    def _photometric(img):
-        if bri > 0:
-            f = 1.0 + random.uniform(-bri, bri)
-            img = ImageEnhance.Brightness(img).enhance(f)
-        if con > 0:
-            f = 1.0 + random.uniform(-con, con)
-            img = ImageEnhance.Contrast(img).enhance(f)
-        return img
 
-    jitter = _photometric if (bri > 0 or con > 0) else None
+class LetterboxToTensor:
+    """Letterbox to a square, build the 3- or 5-channel tensor, normalize boxes to cxcywh."""
 
-    def _resize_and_tensor(img, target):
+    def __init__(self, size: int, use_material: bool, mean: torch.Tensor, std: torch.Tensor,
+                 jitter: Optional[PhotometricJitter] = None):
+        self.size = int(size)
+        self.use_material = bool(use_material)
+        self.mean = mean
+        self.std = std
+        self.jitter = jitter
+
+    def __call__(self, img, target):
+        size = self.size
         w0, h0 = img.size
         target["orig_size"] = torch.tensor([h0, w0])
-        img, ratio, (pad_x, pad_y) = _letterbox(img, size, photometric=jitter)
+        img, ratio, (pad_x, pad_y) = _letterbox(img, size, photometric=self.jitter)
+
         # map boxes: original xyxy -> letterboxed xyxy
         boxes = target["boxes"]
         if len(boxes):
@@ -100,8 +120,8 @@ def _build_transform(cfg: Dict, train: bool) -> Compose:
 
         rgb01 = np.asarray(img, dtype=np.float32) / 255.0            # HxWx3 in [0,1]
         chans = torch.from_numpy(rgb01).permute(2, 0, 1)             # 3xHxW
-        chans = (chans - mean) / std
-        if use_material:
+        chans = (chans - self.mean) / self.std
+        if self.use_material:
             mat = rgb_to_material(rgb01)                              # HxWx2
             mat = torch.from_numpy(mat).permute(2, 0, 1)             # 2xHxW
             chans = torch.cat([chans, mat], dim=0)                    # 5xHxW
@@ -127,7 +147,20 @@ def _build_transform(cfg: Dict, train: bool) -> Compose:
         target["pad"] = torch.tensor([pad_x, pad_y])
         return chans, target
 
-    fns = [_hflip, _resize_and_tensor] if train else [_resize_and_tensor]
+
+def _build_transform(cfg: Dict, train: bool) -> Compose:
+    size = int(cfg["input"]["size"])
+    use_material = bool(cfg["input"]["use_material_proxy"])
+    mean = torch.tensor(cfg["input"]["pixel_mean"]).view(3, 1, 1)
+    std = torch.tensor(cfg["input"]["pixel_std"]).view(3, 1, 1)
+    aug = cfg.get("augment", {})
+    p_flip = float(aug.get("hflip", 0.0)) if train else 0.0
+    bri = float(aug.get("brightness", 0.0)) if train else 0.0
+    con = float(aug.get("contrast", 0.0)) if train else 0.0
+
+    jitter = PhotometricJitter(bri, con) if (bri > 0 or con > 0) else None
+    letterbox = LetterboxToTensor(size, use_material, mean, std, jitter)
+    fns = [RandomHorizontalFlip(p_flip), letterbox] if train else [letterbox]
     return Compose(fns)
 
 
