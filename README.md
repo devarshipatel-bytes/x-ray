@@ -118,6 +118,47 @@ Rough guide at 512px with `--amp`: **12 GB** → `--batch-size 8`; **8 GB** → 
 Keep `--amp` on unless you are debugging numerics. `--workers` should be near your physical
 core count — JPEG decode of the 1225×954 originals, not the GPU, is usually the bottleneck.
 
+## Evaluation
+
+```bash
+python -m engine.evaluate --config configs/xdetr_opixray.yaml --weights runs/opixray_xdetr/final.pth
+```
+
+Two thresholds do different jobs: `eval.score_thresh` (0.05) stays low so the PR-curve tail
+isn't truncated and AP is honest, while `eval.operating_thresh` (0.30) is where
+precision/recall/F1 are reported — the threshold an operator would actually work at.
+Override with `--operating-thresh`.
+
+Reported per class, then macro-averaged (mean over classes) and micro-averaged (all
+detections pooled before dividing):
+
+| Metric | Notes |
+|---|---|
+| **AP@0.5** | VOC all-point interpolation; classes with no GT report `n/a` and are excluded from mAP |
+| **Precision / Recall / F1** | at `operating_thresh`, with the raw TP/FP counts |
+| **best F1 + the score that achieves it** | tells you where to set the UI threshold |
+| **mAP@0.5** | mean of per-class AP |
+| **ECE** | 15-bin reliability over detection confidences |
+| **Occlusion strata** | the full table again for OL1 / OL2 / OL3, plus a decline summary |
+
+Matching is greedy in descending score order and each GT can be claimed once, so duplicate
+detections on one object count as false positives — there is no NMS, since X-DETR is a set
+predictor.
+
+Written to `--output-dir`:
+
+| file | contents |
+|---|---|
+| `eval_results.json` | every scalar above, overall + per occlusion level |
+| `pr_curves.npz` | raw recall/precision/score arrays per class, for replotting figures |
+| `plots/pr_curves.png` | one curve per class, AP in the legend, operating point marked |
+| `plots/reliability.png` | reliability diagram with ECE |
+| `plots/per_class_ap.png` | per-class AP@0.5 bars |
+| `plots/occlusion_map.png` | mAP across OL1/OL2/OL3 |
+| `plots/pr_curves_OL*.png` | PR curves per occlusion level |
+
+`--no-plots` skips matplotlib and prints metrics only.
+
 ## Visualizations
 
 - **Detections** — clean per-class boxes (`viz/detect_overlay.py`).

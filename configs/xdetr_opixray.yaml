@@ -73,5 +73,6 @@ augment:
 
 eval:
   iou_thresh: 0.5                    # VOC-style AP@0.5 (primary KPI)
-  score_thresh: 0.05                 # low threshold for AP curve; UI uses higher
+  score_thresh: 0.05                 # low: keeps the PR-curve tail so AP is not truncated
+  operating_thresh: 0.3              # where P/R/F1 are reported — the realistic UI threshold
   max_dets: 100

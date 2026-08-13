@@ -1,7 +1,7 @@
-"""Metric plots: reliability diagram (ECE), per-class AP bars, occlusion-stratified AP."""
+"""Metric plots: PR curves, reliability diagram (ECE), per-class AP bars, occlusion AP."""
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib
@@ -9,6 +9,46 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .palette import class_color
+
+
+def pr_curves(classes: List[str], per_class: List[Dict], path: str,
+              title: str = "Precision-Recall (IoU 0.5)",
+              operating_thresh: Optional[float] = None):
+    """One PR curve per class, with AP in the legend.
+
+    `per_class` entries come from engine.evaluate.compute_pr and must carry
+    recall / precision / scores / ap / n_gt. Classes with no ground truth are skipped.
+    If operating_thresh is given, the point actually used for the reported P/R/F1 is
+    marked on each curve so the table and the figure can be read together.
+    """
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    plotted = 0
+    for i, (name, cs) in enumerate(zip(classes, per_class)):
+        if cs["n_gt"] == 0 or len(cs["recall"]) == 0:
+            continue
+        color = tuple(v / 255 for v in class_color(i))
+        rec, prec = cs["recall"], cs["precision"]
+        ap = cs["ap"]
+        ax.step(rec, prec, where="post", color=color, linewidth=1.8,
+                label=f"{name}  AP={ap:.3f}")
+        if operating_thresh is not None:
+            # scores descend, so -scores ascend: count of detections at or above the threshold
+            n = int(np.searchsorted(-cs["scores"], -float(operating_thresh), side="right"))
+            if n > 0:
+                ax.plot(rec[n - 1], prec[n - 1], "o", color=color, markersize=6,
+                        markeredgecolor="white", markeredgewidth=1.2, zorder=5)
+        plotted += 1
+
+    if operating_thresh is not None and plotted:
+        ax.plot([], [], "o", color="0.35", markeredgecolor="white",
+                label=f"operating point (score={operating_thresh:.2f})")
+    ax.set_xlabel("recall"); ax.set_ylabel("precision")
+    ax.set_xlim(0, 1.0); ax.set_ylim(0, 1.02)
+    ax.grid(alpha=0.25, linestyle=":")
+    ax.set_title(title)
+    ax.legend(loc="lower left", fontsize=8, framealpha=0.9)
+    fig.tight_layout(); fig.savefig(path, dpi=140); plt.close(fig)
+    return path
 
 
 def reliability_diagram(calib: List[Tuple[float, bool]], path: str, n_bins: int = 15):
